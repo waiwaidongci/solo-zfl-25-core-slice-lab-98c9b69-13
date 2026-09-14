@@ -1,0 +1,182 @@
+{
+  "boreholes": [
+    {
+      "id": "ZK-17",
+      "name": "东岭铜矿17号孔",
+      "unit": "m",
+      "createdAt": "2026-09-14T05:43:20.794Z",
+      "createdBy": "匿名"
+    }
+  ],
+  "intervals": [
+    {
+      "id": "ZK17-1",
+      "boreholeId": "ZK-17",
+      "fromTicks": 1280000,
+      "toTicks": 1285000,
+      "status": "valid",
+      "version": 2,
+      "kind": "source",
+      "note": "",
+      "createdAt": "2026-09-14T05:43:20.799Z",
+      "createdBy": "匿名",
+      "parents": [],
+      "children": [
+        "ZK17-S"
+      ],
+      "supersededBy": null,
+      "correctionOf": null,
+      "confirmedAt": null,
+      "confirmedBy": null
+    },
+    {
+      "id": "ZK17-2",
+      "boreholeId": "ZK-17",
+      "fromTicks": 1285000,
+      "toTicks": 1290000,
+      "status": "valid",
+      "version": 2,
+      "kind": "source",
+      "note": "",
+      "createdAt": "2026-09-14T05:43:20.804Z",
+      "createdBy": "匿名",
+      "parents": [],
+      "children": [
+        "ZK17-S"
+      ],
+      "supersededBy": null,
+      "correctionOf": null,
+      "confirmedAt": null,
+      "confirmedBy": null
+    },
+    {
+      "id": "ZK17-S",
+      "boreholeId": "ZK-17",
+      "fromTicks": 1280000,
+      "toTicks": 1290000,
+      "status": "superseded",
+      "version": 2,
+      "kind": "splice",
+      "note": "",
+      "createdAt": "2026-09-14T05:43:20.807Z",
+      "createdBy": "匿名",
+      "parents": [
+        "ZK17-1",
+        "ZK17-2"
+      ],
+      "children": [
+        "ZK17-S-v2"
+      ],
+      "supersededBy": "ZK17-S-v2",
+      "correctionOf": null,
+      "confirmedAt": null,
+      "confirmedBy": null
+    },
+    {
+      "id": "ZK17-S1",
+      "boreholeId": "ZK-17",
+      "fromTicks": 1280000,
+      "toTicks": 1284000,
+      "status": "pending",
+      "version": 1,
+      "kind": "split",
+      "note": "",
+      "createdAt": "2026-09-14T05:43:20.812Z",
+      "createdBy": "匿名",
+      "parents": [
+        "ZK17-S-v2"
+      ],
+      "children": [],
+      "supersededBy": null,
+      "correctionOf": null,
+      "confirmedAt": null,
+      "confirmedBy": null
+    },
+    {
+      "id": "ZK17-S2",
+      "boreholeId": "ZK-17",
+      "fromTicks": 1284000,
+      "toTicks": 1287000,
+      "status": "valid",
+      "version": 2,
+      "kind": "split",
+      "note": "",
+      "createdAt": "2026-09-14T05:43:20.812Z",
+      "createdBy": "匿名",
+      "parents": [
+        "ZK17-S-v2"
+      ],
+      "children": [
+        "SL-001-A"
+      ],
+      "supersededBy": null,
+      "correctionOf": null,
+      "confirmedAt": "2026-09-14T05:43:20.842Z",
+      "confirmedBy": "匿名"
+    },
+    {
+      "id": "ZK17-S3",
+      "boreholeId": "ZK-17",
+      "fromTicks": 1287000,
+      "toTicks": 1290000,
+      "status": "pending",
+      "version": 1,
+      "kind": "split",
+      "note": "",
+      "createdAt": "2026-09-14T05:43:20.812Z",
+      "createdBy": "匿名",
+      "parents": [
+        "ZK17-S-v2"
+      ],
+      "children": [],
+      "supersededBy": null,
+      "correctionOf": null,
+      "confirmedAt": null,
+      "confirmedBy": null
+    },
+    {
+      "id": "SL-001-A",
+      "boreholeId": "ZK-17",
+      "fromTicks": 1284500,
+      "toTicks": 1286000,
+      "status": "valid",
+      "version": 1,
+      "kind": "slice",
+      "note": "",
+      "createdAt": "2026-09-14T05:43:20.816Z",
+      "createdBy": "匿名",
+      "parents": [
+        "ZK17-S2"
+      ],
+      "children": [],
+      "supersededBy": null,
+      "correctionOf": null,
+      "confirmedAt": "2026-09-14T05:43:20.847Z",
+      "confirmedBy": "匿名"
+    },
+    {
+      "id": "ZK17-S-v2",
+      "boreholeId": "ZK-17",
+      "fromTicks": 1280000,
+      "toTicks": 1292000,
+      "status": "valid",
+      "version": 3,
+      "kind": "correction",
+      "note": "",
+      "createdAt": "2026-09-14T05:43:20.821Z",
+      "createdBy": "匿名",
+      "parents": [
+        "ZK17-S"
+      ],
+      "children": [
+        "ZK17-S1",
+        "ZK17-S2",
+        "ZK17-S3"
+      ],
+      "supersededBy": null,
+      "correctionOf": "ZK17-S",
+      "confirmedAt": null,
+      "confirmedBy": null
+    }
+  ]
+}
