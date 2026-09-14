@@ -343,6 +343,21 @@ export function correctInterval(state, { id, targetId, from, to, expectedVersion
   const fromT = toTicks(from, hole.unit);
   const toT = toTicks(to, hole.unit);
   if (!(fromT < toT)) fail("invalid_interval", "更正后的区间必须满足 起点 < 终点");
+  // 受约束区间（切片/拆分及其更正链）：更正后的范围必须落在存活父代的深度包络内，
+  // 否则等于把越界切片"更正"成另一个越界切片，创建即失败。
+  if (isRangeConstrained(state, target)) {
+    const deps = effectiveLiveParents(state, targetId);
+    if (deps.length) {
+      const hullFrom = Math.min(...deps.map((d) => d.fromTicks));
+      const hullTo = Math.max(...deps.map((d) => d.toTicks));
+      if (fromT < hullFrom || toT > hullTo) {
+        fail(
+          "out_of_bounds",
+          `更正后的范围 [${formatTicks(fromT, hole.unit)}, ${formatTicks(toT, hole.unit)}) 越出有效父区间范围 [${formatTicks(hullFrom, hole.unit)}, ${formatTicks(hullTo, hole.unit)})`
+        );
+      }
+    }
+  }
 
   // 先收集全部后代（在修改任何状态之前完成遍历与校验，保证失败不留部分结果）。
   // 遍历穿透旧版节点：旧版本身是历史档案不再标记，但其更正版本仍是下游，必须一并标出。
@@ -358,6 +373,7 @@ export function correctInterval(state, { id, targetId, from, to, expectedVersion
     }
   }
   const descendants = [];
+  const allDescendants = [];
   const seen = new Set(lineage);
   const queue = [...lineage];
   while (queue.length) {
@@ -367,6 +383,7 @@ export function correctInterval(state, { id, targetId, from, to, expectedVersion
       seen.add(childId);
       const child = getInterval(state, childId);
       if (child.status !== STATUS.SUPERSEDED) descendants.push(child);
+      allDescendants.push(child);
       queue.push(childId);
     }
   }
@@ -376,7 +393,8 @@ export function correctInterval(state, { id, targetId, from, to, expectedVersion
     boreholeId: target.boreholeId,
     fromTicks: fromT,
     toTicks: toT,
-    status: STATUS.VALID,
+    // 更正待复核区间时，新版本仍为待复核：深度修正后仍须按依赖顺序逐级确认
+    status: target.status === STATUS.VALID ? STATUS.VALID : STATUS.PENDING,
     version: target.version + 1,
     kind: "correction",
     note: note || "",
@@ -394,10 +412,10 @@ export function correctInterval(state, { id, targetId, from, to, expectedVersion
   target.status = STATUS.SUPERSEDED;
   target.supersededBy = id;
   const lineageSet = new Set(lineage);
-  for (const d of descendants) {
-    // 直接后代的父引用重定向到更正版本：旧版保留可查，但子树挂到新版下，逐级确认才能走完。
-    // 父引用指向更正链上任一旧版本的，都一并改挂到最新更正版本。
-    d.parents = d.parents.map((pid) => (lineageSet.has(pid) ? id : pid));
+  // 全部后代（含旧版节点）的派生边都重定向到最新更正版本：parents 始终指向当前版本，
+  // 历史轨迹由 correctionOf/supersededBy 更正链保留；correctionOf 边本身不重定向。
+  for (const d of allDescendants) {
+    d.parents = d.parents.map((pid) => (lineageSet.has(pid) && d.correctionOf !== pid ? id : pid));
     if (d.parents.includes(id)) {
       for (const oldId of lineage) {
         const old = state.intervals.get(oldId);
@@ -405,6 +423,8 @@ export function correctInterval(state, { id, targetId, from, to, expectedVersion
       }
       if (!correction.children.includes(d.id)) correction.children.push(d.id);
     }
+  }
+  for (const d of descendants) {
     if (d.status === STATUS.VALID) d.status = STATUS.PENDING;
   }
   return { correction, superseded: target, affected: descendants };
@@ -412,20 +432,82 @@ export function correctInterval(state, { id, targetId, from, to, expectedVersion
 
 // ---------- 操作：逐级确认（父链全部有效后，子级才能恢复有效） ----------
 
+// 穿透旧版节点，收集区间当前的"存活父代"。依赖顺序与范围约束都按存活父代计算：
+// - 更正边（指向自己前世的 parents）继承前世的存活父代；
+// - 派生边若仍指向旧版（历史数据），沿 supersededBy 解析到最新存活版本。
+export function effectiveLiveParents(state, id) {
+  const result = new Map();
+  const seen = new Set();
+  const collect = (nodeId) => {
+    const node = getInterval(state, nodeId);
+    if (seen.has(node.id)) return;
+    seen.add(node.id);
+    for (const pid of node.parents) {
+      if (node.correctionOf === pid) {
+        collect(pid);
+        continue;
+      }
+      let live = getInterval(state, pid);
+      while (live.status === STATUS.SUPERSEDED && live.supersededBy) {
+        live = getInterval(state, live.supersededBy);
+      }
+      result.set(live.id, live);
+    }
+  };
+  collect(id);
+  return [...result.values()];
+}
+
+// 切片/拆分派生区间的深度受父区间约束；更正版本继承被更正者的约束属性；
+// 拼接与原始登记是"定义型"区间，其更正视为重新测量，不受父代包络约束。
+export function isRangeConstrained(state, interval) {
+  let cursor = interval;
+  const seen = new Set();
+  while (cursor) {
+    if (seen.has(cursor.id)) fail("corrupt_data", `检测到循环引用，涉及区间 ${cursor.id}`);
+    seen.add(cursor.id);
+    if (cursor.kind === "slice" || cursor.kind === "split") return true;
+    if (cursor.kind !== "correction") return false;
+    cursor = cursor.correctionOf ? state.intervals.get(cursor.correctionOf) : null;
+  }
+  return false;
+}
+
+// 越界判定：受约束区间必须落在全部存活父代的深度包络内（半开区间，边界相等算包含）。
+// 返回 null 表示未越界，否则返回 { deps, hullFrom, hullTo }。
+export function constraintViolation(state, interval) {
+  if (!isRangeConstrained(state, interval)) return null;
+  const deps = effectiveLiveParents(state, interval.id);
+  if (!deps.length) return null;
+  const hullFrom = Math.min(...deps.map((d) => d.fromTicks));
+  const hullTo = Math.max(...deps.map((d) => d.toTicks));
+  if (interval.fromTicks >= hullFrom && interval.toTicks <= hullTo) return null;
+  return { deps, hullFrom, hullTo };
+}
+
 export function confirmInterval(state, { id }, ctx) {
   const interval = getInterval(state, id);
   if (interval.status !== STATUS.PENDING) {
     fail("not_pending", `区间 ${id} 当前状态为「${interval.status}」，无需确认`);
   }
-  const blocking = interval.parents
-    .map((pid) => getInterval(state, pid))
-    .filter((p) => p.status !== STATUS.VALID && interval.correctionOf !== p.id)
-    .map((p) => p.id);
+  // 依赖顺序：全部存活父代必须先恢复有效
+  const deps = effectiveLiveParents(state, id);
+  const blocking = deps.filter((d) => d.status !== STATUS.VALID).map((d) => d.id);
   if (blocking.length) {
     fail(
       "parents_not_confirmed",
       `必须先逐级确认父级区间：${blocking.join("、")} 仍为待复核/旧版`,
       { blocking }
+    );
+  }
+  // 越界拦截：父区间更正后越出存活父代包络的切片必须保持待复核，不得恢复有效
+  const violation = constraintViolation(state, interval);
+  if (violation) {
+    const hole = getBorehole(state, interval.boreholeId);
+    fail(
+      "out_of_bounds",
+      `区间 ${id} [${formatTicks(interval.fromTicks, hole.unit)}, ${formatTicks(interval.toTicks, hole.unit)}) 越出有效父区间范围 [${formatTicks(violation.hullFrom, hole.unit)}, ${formatTicks(violation.hullTo, hole.unit)})，保持待复核；请先将其深度更正到父区间内`,
+      { blocking: violation.deps.map((d) => d.id) }
     );
   }
   interval.status = STATUS.VALID;
@@ -483,7 +565,7 @@ export function wouldCreateCycle(state, parentId, childId) {
 // ---------- 派生状态重建（重启后调用） ----------
 
 export function rebuildDerived(state) {
-  // 1) 关系完整性校验 + 子级索引重建
+  // 1) 关系完整性校验 + 子级索引重建 + parents 图环检测
   for (const interval of state.intervals.values()) interval.children = [];
   for (const interval of state.intervals.values()) {
     for (const pid of interval.parents) {
@@ -492,27 +574,28 @@ export function rebuildDerived(state) {
       parent.children.push(interval.id);
     }
   }
-  // 2) 待复核状态重建：任何非旧版区间，若其祖先链上存在被取代的旧版，则必须为待复核。
-  //    例外：指向自己 correctionOf 旧版的边不算——更正版本本身就是对旧版的替代。
-  const memo = new Map();
-  const hasSupersededAncestor = (id, visiting = new Set()) => {
-    if (memo.has(id)) return memo.get(id);
-    if (visiting.has(id)) fail("corrupt_data", `检测到循环引用，涉及区间 ${id}`);
-    visiting.add(id);
-    const node = state.intervals.get(id);
-    const result = node.parents.some((pid) => {
-      const p = state.intervals.get(pid);
-      if (p.status === STATUS.SUPERSEDED && node.correctionOf !== pid) return true;
-      return hasSupersededAncestor(pid, visiting);
-    });
-    visiting.delete(id);
-    memo.set(id, result);
-    return result;
-  };
+  {
+    const visiting = new Set();
+    const done = new Set();
+    const dfs = (id) => {
+      if (done.has(id)) return;
+      if (visiting.has(id)) fail("corrupt_data", `检测到循环引用，涉及区间 ${id}`);
+      visiting.add(id);
+      for (const pid of state.intervals.get(id).parents) dfs(pid);
+      visiting.delete(id);
+      done.add(id);
+    };
+    for (const id of state.intervals.keys()) dfs(id);
+  }
+  // 2) 待复核状态重建：非旧版区间的 parents 中若含有旧版节点、且该边不是指向自身前世的
+  //    更正边，说明其上游被取代而未走更正流程，必须为待复核。
   for (const interval of state.intervals.values()) {
-    if (interval.status !== STATUS.SUPERSEDED && hasSupersededAncestor(interval.id)) {
-      interval.status = STATUS.PENDING;
-    }
+    if (interval.status === STATUS.SUPERSEDED) continue;
+    const stale = interval.parents.some((pid) => {
+      const p = state.intervals.get(pid);
+      return p.status === STATUS.SUPERSEDED && interval.correctionOf !== pid;
+    });
+    if (stale) interval.status = STATUS.PENDING;
   }
   return state;
 }

@@ -413,6 +413,172 @@ await okAsync("重启后逐级确认恢复正常流程", async () => {
   assert.equal(intervalOf(state, "SL1").status, "valid");
 });
 
+console.log("\n[回归] 更正后越界切片的复核拦截");
+await okAsync("准备：父区间 [0,10)m 派生切片 [8,10)", async () => {
+  assert.equal((await post(main.base, "/api/depth/boreholes", { id: "ZK-M", name: "越界孔", unit: "m" })).status, 201);
+  assert.equal((await post(main.base, "/api/depth/intervals", { id: "M-P", boreholeId: "ZK-M", from: 0, to: 10 })).status, 201);
+  assert.equal((await post(main.base, "/api/depth/derive", { id: "M-S", parentId: "M-P", expectedVersion: 1, from: 8, to: 10 })).status, 201);
+});
+await okAsync("父区间更正为 [0,5)：切片转待复核且视图标记越界", async () => {
+  const p = intervalOf(await stateOf(main.base), "M-P");
+  const res = await post(main.base, "/api/depth/correct", { id: "M-P2", targetId: "M-P", expectedVersion: p.version, from: 0, to: 5 });
+  assert.equal(res.status, 201, JSON.stringify(res.data));
+  assert.deepEqual(res.data.affected, ["M-S"]);
+  const s = intervalOf(await stateOf(main.base), "M-S");
+  assert.equal(s.status, "pending");
+  assert.equal(s.outOfBounds, true, "越界切片应在状态视图中标记 outOfBounds");
+});
+await okAsync("越界切片确认被拒绝，且区间与关系零变化", async () => {
+  const before = JSON.stringify(await stateOf(main.base));
+  const res = await post(main.base, "/api/depth/confirm", { id: "M-S" });
+  assert.equal(res.status, 400);
+  assert.equal(res.data.error, "out_of_bounds");
+  assert.equal(JSON.stringify(await stateOf(main.base)), before, "失败的确认不得改变任何区间与关系");
+  assert.equal(intervalOf(await stateOf(main.base), "M-S").status, "pending", "越界切片必须保持待复核");
+});
+await okAsync("越界切片不能继续派生", async () => {
+  const res = await post(main.base, "/api/depth/derive", { id: "M-S-X", parentId: "M-S", expectedVersion: 1, from: 8, to: 9 });
+  assert.equal(res.status, 400);
+  assert.equal(res.data.error, "interval_not_valid");
+});
+await okAsync("切片更正到父区间外：创建即失败且无残留", async () => {
+  const before = JSON.stringify(await stateOf(main.base));
+  const res = await post(main.base, "/api/depth/correct", { id: "M-S2", targetId: "M-S", expectedVersion: 1, from: 6, to: 8 });
+  assert.equal(res.status, 400);
+  assert.equal(res.data.error, "out_of_bounds");
+  assert.equal(JSON.stringify(await stateOf(main.base)), before, "失败的更正不得产生新区间或关系");
+  assert.equal(intervalOf(await stateOf(main.base), "M-S2"), null);
+});
+await okAsync("切片更正到有效父区间内：新版本仍为待复核", async () => {
+  const res = await post(main.base, "/api/depth/correct", { id: "M-S2", targetId: "M-S", expectedVersion: 1, from: 3, to: 5 });
+  assert.equal(res.status, 201, JSON.stringify(res.data));
+  const state = await stateOf(main.base);
+  assert.equal(intervalOf(state, "M-S").status, "superseded");
+  const s2 = intervalOf(state, "M-S2");
+  assert.equal(s2.status, "pending", "更正后的切片仍须按依赖顺序复核");
+  assert.equal(s2.outOfBounds, false);
+});
+await okAsync("按依赖顺序复核：父有效且落入包络后确认成功", async () => {
+  const res = await post(main.base, "/api/depth/confirm", { id: "M-S2" });
+  assert.equal(res.status, 200, JSON.stringify(res.data));
+  assert.equal(res.data.status, "valid");
+});
+await okAsync("边界相等：与父区间完全重合的切片可确认", async () => {
+  const p2 = intervalOf(await stateOf(main.base), "M-P2");
+  assert.equal((await post(main.base, "/api/depth/derive", { id: "M-EQ", parentId: "M-P2", expectedVersion: p2.version, from: 0, to: 5 })).status, 201);
+  const p2b = intervalOf(await stateOf(main.base), "M-P2");
+  assert.equal((await post(main.base, "/api/depth/correct", { id: "M-P3", targetId: "M-P2", expectedVersion: p2b.version, from: 0, to: 5 })).status, 201);
+  assert.equal(intervalOf(await stateOf(main.base), "M-EQ").status, "pending");
+  const conf = await post(main.base, "/api/depth/confirm", { id: "M-EQ" });
+  assert.equal(conf.status, 200, "边界相等 [0,5)⊆[0,5) 应确认成功: " + JSON.stringify(conf.data));
+});
+await okAsync("边界相等：起点贴着父区间右端点即为越界", async () => {
+  const p3 = intervalOf(await stateOf(main.base), "M-P3");
+  const res = await post(main.base, "/api/depth/derive", { id: "M-OUT", parentId: "M-P3", expectedVersion: p3.version, from: 5, to: 6 });
+  assert.equal(res.status, 400);
+  assert.equal(res.data.error, "slice_out_of_bounds");
+});
+await okAsync("多级后代：中间级越界逐级拦截，孙级按依赖顺序复核", async () => {
+  const p3 = intervalOf(await stateOf(main.base), "M-P3");
+  assert.equal((await post(main.base, "/api/depth/split", { parentId: "M-P3", expectedVersion: p3.version, cuts: [2], childIds: ["M-C1", "M-C2"] })).status, 201);
+  const c2 = intervalOf(await stateOf(main.base), "M-C2");
+  assert.equal((await post(main.base, "/api/depth/derive", { id: "M-D", parentId: "M-C2", expectedVersion: c2.version, from: 3, to: 4 })).status, 201);
+  const p3b = intervalOf(await stateOf(main.base), "M-P3");
+  const cor = await post(main.base, "/api/depth/correct", { id: "M-P4", targetId: "M-P3", expectedVersion: p3b.version, from: 0, to: 3 });
+  assert.equal(cor.status, 201);
+  assert.deepEqual(cor.data.affected.sort(), ["M-C1", "M-C2", "M-D", "M-EQ", "M-S2"].sort(), "全部后代（含旧链路上的）都应待复核");
+  // 中间级 M-C2 [2,5) 越出 M-P4 [0,3)
+  const confC2 = await post(main.base, "/api/depth/confirm", { id: "M-C2" });
+  assert.equal(confC2.data.error, "out_of_bounds");
+  // 孙级 M-D 先被依赖顺序拦截
+  const confD = await post(main.base, "/api/depth/confirm", { id: "M-D" });
+  assert.equal(confD.data.error, "parents_not_confirmed");
+  assert.deepEqual(confD.data.details.blocking, ["M-C2"]);
+  // 中间级更正到父区间内 → 仍待复核 → 确认恢复
+  const c2v = intervalOf(await stateOf(main.base), "M-C2");
+  assert.equal((await post(main.base, "/api/depth/correct", { id: "M-C2v2", targetId: "M-C2", expectedVersion: c2v.version, from: 2, to: 3 })).status, 201);
+  assert.equal(intervalOf(await stateOf(main.base), "M-C2v2").status, "pending");
+  assert.equal((await post(main.base, "/api/depth/confirm", { id: "M-C2v2" })).status, 200);
+  // 孙级 M-D [3,4) 仍越出 M-C2v2 [2,3)：确认被拒
+  const confD2 = await post(main.base, "/api/depth/confirm", { id: "M-D" });
+  assert.equal(confD2.data.error, "out_of_bounds");
+  // 孙级更正到 [2,3) 内（边界相等）→ 待复核 → 确认恢复
+  const dv = intervalOf(await stateOf(main.base), "M-D");
+  assert.equal((await post(main.base, "/api/depth/correct", { id: "M-D2", targetId: "M-D", expectedVersion: dv.version, from: 2, to: 3 })).status, 201);
+  assert.equal((await post(main.base, "/api/depth/confirm", { id: "M-D2" })).status, 200);
+});
+await okAsync("连续更正：约束始终按最新有效版本计算", async () => {
+  const p4 = intervalOf(await stateOf(main.base), "M-P4");
+  assert.equal((await post(main.base, "/api/depth/correct", { id: "M-P5", targetId: "M-P4", expectedVersion: p4.version, from: 0, to: 2 })).status, 201);
+  const state = await stateOf(main.base);
+  assert.equal(intervalOf(state, "M-C2v2").status, "pending", "再次更正后中间级重新待复核");
+  assert.equal(intervalOf(state, "M-C2v2").outOfBounds, true);
+  assert.equal((await post(main.base, "/api/depth/confirm", { id: "M-C2v2" })).data.error, "out_of_bounds");
+});
+await okAsync("厘米单位：同样的越界拦截与更正复核流程", async () => {
+  assert.equal((await post(main.base, "/api/depth/boreholes", { id: "ZK-CM", name: "厘米孔", unit: "cm" })).status, 201);
+  assert.equal((await post(main.base, "/api/depth/intervals", { id: "CM-P", boreholeId: "ZK-CM", from: 0, to: 1000 })).status, 201);
+  assert.equal((await post(main.base, "/api/depth/derive", { id: "CM-S", parentId: "CM-P", expectedVersion: 1, from: 800, to: 1000 })).status, 201);
+  const p = intervalOf(await stateOf(main.base), "CM-P");
+  assert.equal((await post(main.base, "/api/depth/correct", { id: "CM-P2", targetId: "CM-P", expectedVersion: p.version, from: 0, to: 500 })).status, 201);
+  const s = intervalOf(await stateOf(main.base), "CM-S");
+  assert.equal(s.status, "pending");
+  assert.equal(s.outOfBounds, true);
+  assert.equal((await post(main.base, "/api/depth/confirm", { id: "CM-S" })).data.error, "out_of_bounds");
+  const s2 = intervalOf(await stateOf(main.base), "CM-S");
+  assert.equal((await post(main.base, "/api/depth/correct", { id: "CM-S2", targetId: "CM-S", expectedVersion: s2.version, from: 400.55, to: 500 })).status, 201);
+  assert.equal((await post(main.base, "/api/depth/confirm", { id: "CM-S2" })).status, 200);
+});
+await okAsync("并发确认越界切片：全部失败且状态不变", async () => {
+  const before = JSON.stringify(await stateOf(main.base));
+  const results = await Promise.all([1, 2, 3].map(() => post(main.base, "/api/depth/confirm", { id: "M-C2v2" })));
+  assert.ok(results.every((r) => r.status === 400 && r.data.error === "out_of_bounds"), JSON.stringify(results.map((r) => r.status)));
+  assert.equal(JSON.stringify(await stateOf(main.base)), before);
+});
+let sliceWinner;
+await okAsync("并发更正同一待复核切片：仅成功一次，新版仍待复核", async () => {
+  const s = intervalOf(await stateOf(main.base), "M-C2v2");
+  const results = await Promise.all([
+    post(main.base, "/api/depth/correct", { id: "M-C2v3a", targetId: "M-C2v2", expectedVersion: s.version, from: 0, to: 2 }),
+    post(main.base, "/api/depth/correct", { id: "M-C2v3b", targetId: "M-C2v2", expectedVersion: s.version, from: 0, to: 2 }),
+  ]);
+  assert.equal(results.filter((r) => r.status === 201).length, 1, JSON.stringify(results.map((r) => r.status)));
+  sliceWinner = results.find((r) => r.status === 201).data.correction.id;
+  assert.equal(intervalOf(await stateOf(main.base), sliceWinner).status, "pending");
+  assert.equal((await post(main.base, "/api/depth/confirm", { id: sliceWinner })).status, 200);
+});
+await okAsync("重启后越界约束仍成立", async () => {
+  const p5 = intervalOf(await stateOf(main.base), "M-P5");
+  assert.equal((await post(main.base, "/api/depth/correct", { id: "M-P6", targetId: "M-P5", expectedVersion: p5.version, from: 0, to: 1 })).status, 201);
+  assert.equal(intervalOf(await stateOf(main.base), sliceWinner).status, "pending", "再次级联后切片重新待复核");
+  await stopServer(main.child);
+  const restarted = await startServer({}, main.dir);
+  main.child = restarted.child;
+  main.base = restarted.base;
+  const state = await stateOf(main.base);
+  const w = intervalOf(state, sliceWinner);
+  assert.equal(w.status, "pending", "重启后仍待复核");
+  assert.equal(w.outOfBounds, true, "重启后仍标记越界");
+  const res = await post(main.base, "/api/depth/confirm", { id: sliceWinner });
+  assert.equal(res.data.error, "out_of_bounds", "重启后越界确认仍被拒绝");
+});
+await okAsync("页面与接口结果一致：状态接口标记越界，页面渲染越界标识", async () => {
+  const state = await stateOf(main.base);
+  assert.equal(intervalOf(state, sliceWinner).outOfBounds, true);
+  const res = await fetch(main.base + "/depth");
+  const html = await res.text();
+  assert.equal(res.status, 200);
+  assert.ok(html.includes("越界"), "页面应包含越界标识");
+});
+await okAsync("来源链保留全部更正轨迹", async () => {
+  const res = await get(main.base, `/api/depth/intervals/${sliceWinner}/chain`);
+  assert.equal(res.status, 200);
+  const ids = res.data.nodes.map((n) => n.id);
+  for (const id of ["M-P", "M-P2", "M-P3", "M-P4", "M-P5", "M-P6", "M-C2", "M-C2v2", sliceWinner]) {
+    assert.ok(ids.includes(id), "来源链缺少节点 " + id);
+  }
+});
+
 console.log("\n[旧入口兼容]");
 await okAsync("旧页面 / 可访问", async () => {
   const res = await fetch(main.base + "/");

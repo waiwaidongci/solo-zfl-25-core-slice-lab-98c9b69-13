@@ -6,6 +6,13 @@
       "unit": "m",
       "createdAt": "2026-09-14T05:43:20.794Z",
       "createdBy": "匿名"
+    },
+    {
+      "id": "ZK-DEMO",
+      "name": "ZK-DEMO",
+      "unit": "m",
+      "createdAt": "2026-09-14T07:18:35.865Z",
+      "createdBy": "匿名"
     }
   ],
   "intervals": [
@@ -177,6 +184,90 @@
       "correctionOf": "ZK17-S",
       "confirmedAt": null,
       "confirmedBy": null
+    },
+    {
+      "id": "DEMO-P",
+      "boreholeId": "ZK-DEMO",
+      "fromTicks": 0,
+      "toTicks": 100000,
+      "status": "superseded",
+      "version": 2,
+      "kind": "source",
+      "note": "",
+      "createdAt": "2026-09-14T07:18:35.875Z",
+      "createdBy": "匿名",
+      "parents": [],
+      "children": [
+        "DEMO-P2"
+      ],
+      "supersededBy": "DEMO-P2",
+      "correctionOf": null,
+      "confirmedAt": null,
+      "confirmedBy": null
+    },
+    {
+      "id": "DEMO-S",
+      "boreholeId": "ZK-DEMO",
+      "fromTicks": 80000,
+      "toTicks": 100000,
+      "status": "superseded",
+      "version": 1,
+      "kind": "slice",
+      "note": "",
+      "createdAt": "2026-09-14T07:18:35.880Z",
+      "createdBy": "匿名",
+      "parents": [
+        "DEMO-P2"
+      ],
+      "children": [
+        "DEMO-S2"
+      ],
+      "supersededBy": "DEMO-S2",
+      "correctionOf": null,
+      "confirmedAt": null,
+      "confirmedBy": null
+    },
+    {
+      "id": "DEMO-P2",
+      "boreholeId": "ZK-DEMO",
+      "fromTicks": 0,
+      "toTicks": 50000,
+      "status": "valid",
+      "version": 3,
+      "kind": "correction",
+      "note": "",
+      "createdAt": "2026-09-14T07:18:35.886Z",
+      "createdBy": "匿名",
+      "parents": [
+        "DEMO-P"
+      ],
+      "children": [
+        "DEMO-S"
+      ],
+      "supersededBy": null,
+      "correctionOf": "DEMO-P",
+      "confirmedAt": null,
+      "confirmedBy": null
+    },
+    {
+      "id": "DEMO-S2",
+      "boreholeId": "ZK-DEMO",
+      "fromTicks": 30000,
+      "toTicks": 50000,
+      "status": "valid",
+      "version": 2,
+      "kind": "correction",
+      "note": "",
+      "createdAt": "2026-09-14T07:18:35.911Z",
+      "createdBy": "匿名",
+      "parents": [
+        "DEMO-S"
+      ],
+      "children": [],
+      "supersededBy": null,
+      "correctionOf": "DEMO-S",
+      "confirmedAt": "2026-09-14T07:18:35.921Z",
+      "confirmedBy": "匿名"
     }
   ]
 }

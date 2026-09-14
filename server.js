@@ -8,6 +8,7 @@ import {
   STATUS,
   UNITS,
   confirmInterval,
+  constraintViolation,
   correctInterval,
   createBorehole,
   createInterval,
@@ -133,6 +134,7 @@ function intervalView(state, it) {
     createdBy: it.createdBy,
     confirmedAt: it.confirmedAt,
     confirmedBy: it.confirmedBy,
+    outOfBounds: constraintViolation(state, it) !== null,
   };
 }
 
@@ -400,7 +402,8 @@ const depthPage = `<!doctype html>
       $("rows").innerHTML = all.map(function (it) {
         var confirmBtn = it.status === "pending" ? '<button data-confirm="' + it.id + '">确认有效</button>' : "";
         return "<tr><td><b>" + it.id + "</b></td><td>" + it.boreholeId + "</td><td>" + it.range + "</td>" +
-          '<td><span class="pill ' + it.status + '">' + STATUS_LABEL[it.status] + "</span></td><td>v" + it.version + "</td>" +
+          '<td><span class="pill ' + it.status + '">' + STATUS_LABEL[it.status] + "</span>" +
+          (it.outOfBounds ? ' <span class="tag" style="color:var(--bad);border-color:var(--bad)">越界</span>' : "") + "</td><td>v" + it.version + "</td>" +
           "<td>" + (KIND_LABEL[it.kind] || it.kind) + "</td>" +
           "<td>" + (it.parents.join("、") || "—") + (it.supersededBy ? '<div class="muted">被 ' + it.supersededBy + " 取代</div>" : "") + "</td>" +
           '<td class="row-actions">' + confirmBtn + '<button class="ghost" data-chain="' + it.id + '">来源链</button></td></tr>';
